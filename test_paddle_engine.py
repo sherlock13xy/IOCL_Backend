@@ -1,46 +1,79 @@
 import os
-import json
 from app.ocr.paddle_engine import run_ocr
 
-# 1. Define the path to your image
-# Make sure this matches the output folder from your previous PDF step
-image_path = "uploads/medical_bill-2_page_1.png"
 
 def test_ocr_processing():
-    print(f"--- Starting OCR Test ---")
-    
-    # 2. Check if the file actually exists before running
-    if not os.path.exists(image_path):
-        print(f"ERROR: File not found at {os.path.abspath(image_path)}")
-        print("Please check if your 'pdf_to_images' function ran correctly first.")
+    print("🔍 Starting OCR Test ---\n")
+
+    images_dir = "uploads/processed"
+
+    # Check if directory exists
+    if not os.path.exists(images_dir):
+        print(f"❌ ERROR: Directory not found: {images_dir}")
+        print(f"   Current working directory: {os.getcwd()}")
         return
 
+    # Find all bill page images
+    all_files = os.listdir(images_dir)
+    image_paths = sorted([
+        os.path.join(images_dir, f)
+        for f in all_files
+        if f.startswith("Bill_page_") and f.endswith(".png")
+    ])
+
+    if not image_paths:
+        print(f"❌ No bill page images found in {images_dir}")
+        print(f"   Files in directory: {all_files}")
+        return
+
+    print(f"📄 Found {len(image_paths)} pages:")
+    for path in image_paths:
+        file_size = os.path.getsize(path)
+        print(f"   - {path} ({file_size:,} bytes)")
+    print()
+
     try:
-        # 3. Run the OCR function
-        print(f"Processing image: {image_path}...")
-        result = run_ocr(image_path)
+        result = run_ocr(image_paths)
 
-        # 4. Display the results
-        print("\n" + "="*30)
-        print("1. FULL EXTRACTED TEXT:")
-        print("="*30)
-        if result["raw_text"].strip():
-            print(result["raw_text"])
-        else:
-            print("[No text detected in image]")
+        if not result["raw_text"].strip():
+            print("⚠️  WARNING: No text was extracted!")
+            print("   This could mean:")
+            print("   - Images are corrupted or empty")
+            print("   - Images are not readable (wrong format)")
+            print("   - PaddleOCR installation issue")
+            return
 
-        print("\n" + "="*30)
-        print("2. LINE-BY-LINE DATA (First 5 lines):")
-        print("="*30)
-        # Showing just the first 5 to keep the terminal clean
-        for i, line in enumerate(result["lines"][:5]):
-            print(f"Line {i+1}: Text='{line['text']}' | Confidence={line['confidence']:.2f}")
-        
-        if len(result["lines"]) > 5:
-            print(f"... and {len(result['lines']) - 5} more lines.")
+        print("\n" + "="*60)
+        print("RAW OCR TEXT")
+        print("="*60 + "\n")
+        print(result["raw_text"])
+
+        print(f"\n" + "="*60)
+        print(f"GROUPED BILL ITEMS ({len(result['item_blocks'])} blocks)")
+        print("="*60 + "\n")
+
+        for idx, block in enumerate(result["item_blocks"], start=1):
+            text = block["text"].strip()
+            if not text:
+                continue
+
+            confidence_avg = sum(line["confidence"] for line in block["lines"]) / len(block["lines"])
+            
+            print(f"[BLOCK {idx}] (confidence: {confidence_avg:.2f})")
+            print(text)
+            print("-" * 60)
+
+        # Save results to file
+        output_file = "ocr_results.txt"
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(result["raw_text"])
+        print(f"\n💾 Results saved to: {output_file}")
 
     except Exception as e:
-        print(f"An unexpected error occurred during the test: {e}")
+        print(f"❌ ERROR during OCR processing: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
 
 if __name__ == "__main__":
     test_ocr_processing()

@@ -6,6 +6,14 @@ POPPLER_PATH = r"C:\poppler\Library\bin"
 
 
 def pdf_to_images(pdf_path: str, output_dir: str = "uploads") -> List[str]:
+    """
+    Args:
+        pdf_path (str): The file path to the source PDF document.
+        output_dir (str): The directory where the resulting image files will be saved = "uploads".
+
+    Returns:
+        List[str]: The full file paths of all the PNG images created.
+    """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 

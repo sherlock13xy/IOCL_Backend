@@ -1,4 +1,6 @@
-from app.ocr.image_preprocessor import preprocess_image
+from app.ocr.batch_preprocessor import preprocess_images_in_dir
 
-processed_path = preprocess_image("uploads/medical_bill-2_page_1.png")
-print("Processed image saved at:", processed_path)
+processed_images = preprocess_images_in_dir("uploads/")
+
+for img in processed_images:
+    print("Processed image:", img)

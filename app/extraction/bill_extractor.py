@@ -5,6 +5,9 @@ from typing import Dict, List
 def extract_basic_fields(text: str) -> Dict:
     """
     Extract basic bill-level fields using regex.
+    
+    Returns:
+        extracted {dict}: Key-Value Pair of the extracted basic bill-level fields.
     """
     patterns = {
         "patient_name": r"Patient\s*Name[:\-]?\s*(.*)",
