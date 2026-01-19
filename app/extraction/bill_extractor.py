@@ -49,6 +49,13 @@ from app.extraction.zone_detector import (
     is_payment_zone,
     should_skip_as_header_label,
 )
+from app.extraction.regex_utils import (
+    safe_group,
+    try_extract_labeled_field,
+    is_label_only,
+    extract_from_next_line,
+    clean_extracted_value,
+)
 
 
 # =============================================================================
@@ -169,8 +176,12 @@ def extract_discount_amount(text: str) -> Optional[float]:
         m = re.search(pat, text.strip())
         if m:
             try:
-                return float(m.group(1).replace(",", ""))
-            except ValueError:
+                # Use safe_group to prevent None.replace() crashes
+                amount_str = safe_group(m, 1, "")
+                if not amount_str:
+                    continue
+                return float(amount_str.replace(",", ""))
+            except (ValueError, AttributeError):
                 continue
 
     return None
@@ -183,10 +194,15 @@ def extract_reference(text: str) -> Optional[str]:
     u = text.upper()
     m = re.search(r"\bRCPO-[A-Z0-9]+\b", u)
     if m:
-        return m.group(0)
+        ref = safe_group(m, 0, "")
+        if ref:
+            return ref
     m = re.search(r"\b(UTR|RRN|TXN)\s*[:#-]?\s*([A-Z0-9]{6,})\b", u)
     if m:
-        return f"{m.group(1)}-{m.group(2)}"
+        type_part = safe_group(m, 1, "")
+        ref_part = safe_group(m, 2, "")
+        if type_part and ref_part:
+            return f"{type_part}-{ref_part}"
     return None
 
 
@@ -225,14 +241,17 @@ def extract_amount_from_text(text: str) -> Optional[float]:
         m = re.search(pat, text.strip())
         if not m:
             continue
-        s = m.group(1).replace(",", "")
+        # Use safe_group to prevent None.replace() crashes
+        s = safe_group(m, 1, "")
+        if not s:
+            continue
         try:
-            val = float(s)
+            val = float(s.replace(",", ""))
             # Apply sanity cap
             if val > MAX_LINE_ITEM_AMOUNT:
                 return None
             return val
-        except ValueError:
+        except (ValueError, AttributeError):
             continue
     return None
 
@@ -413,6 +432,7 @@ class HeaderParser:
         self.aggregator = HeaderAggregator()
         self.bill_number_candidates: List[str] = []
         self._fallback_name_candidates: List[Tuple[str, int, float]] = []  # (name, page, confidence)
+        self._pending_label: Optional[Tuple[str, int, float]] = None  # (field, page, confidence) for multi-line extraction
 
     def parse(self, lines: List[Dict[str, Any]], page_zones: Dict) -> Dict[str, Any]:
         """Parse headers from lines.
@@ -424,8 +444,8 @@ class HeaderParser:
         Returns:
             Dict with header and patient info
         """
-        # First pass: label-based extraction from ALL pages
-        for line in lines:
+        # First pass: label-based extraction from ALL pages with multi-line support
+        for i, line in enumerate(lines):
             text = (line.get("text") or "").strip()
             if not text:
                 continue
@@ -442,7 +462,9 @@ class HeaderParser:
             if re.search(r"[\d,]+\.\d{2}\s*$", text):
                 continue
 
-            self._extract_from_line(line)
+            # Get next line for multi-line extraction support
+            next_line = lines[i + 1] if i + 1 < len(lines) else None
+            self._extract_from_line(line, next_line)
 
         # Second pass: fallback name extraction if patient_name not found
         if not self.aggregator.is_locked("patient_name"):
@@ -450,8 +472,13 @@ class HeaderParser:
 
         return self._finalize()
 
-    def _extract_from_line(self, line: Dict[str, Any]) -> None:
-        """Extract header candidates from a single line using label patterns."""
+    def _extract_from_line(self, line: Dict[str, Any], next_line: Optional[Dict[str, Any]] = None) -> None:
+        """Extract header candidates from a single line using label patterns.
+        
+        Args:
+            line: Current OCR line
+            next_line: Next OCR line (for multi-line extraction)
+        """
         text = (line.get("text") or "").strip()
         page = int(line.get("page", 0) or 0)
         conf = float(line.get("confidence", 1.0) or 1.0)
@@ -461,19 +488,67 @@ class HeaderParser:
             if self.aggregator.is_locked(field):
                 continue
 
-            for pat in patterns:
-                if re.search(pat, tl):
-                    m = re.search(pat + r"\s*(.+)", text, re.IGNORECASE)
-                    if m:
-                        val = re.sub(r"^[:.]\s*", "", m.group(1).strip())
-                        # For patient_name, clean up the extracted value
-                        if field == "patient_name":
-                            val = self._clean_patient_name(val)
-                        cand = Candidate(field=field, value=val, score=conf, page=page)
-                        if self.aggregator.offer(cand):
-                            if field == "bill_number":
-                                self.bill_number_candidates.append(val.strip())
-                    break
+            # Try to extract value using safe helpers
+            extracted_value = self._try_extract_field(text, patterns, field, next_line)
+            
+            if extracted_value:
+                # For patient_name, clean up the extracted value
+                if field == "patient_name":
+                    extracted_value = self._clean_patient_name(extracted_value)
+                
+                cand = Candidate(field=field, value=extracted_value, score=conf, page=page)
+                if self.aggregator.offer(cand):
+                    if field == "bill_number":
+                        self.bill_number_candidates.append(extracted_value.strip())
+                break  # Move to next field once extracted
+
+    def _try_extract_field(self, text: str, patterns: List[str], field: str, 
+                          next_line: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """Try to extract a field value safely from current or next line.
+        
+        Args:
+            text: Current line text
+            patterns: Label patterns to try
+            field: Field name being extracted
+            next_line: Next line for multi-line extraction
+            
+        Returns:
+            Extracted value or None
+        """
+        # First try: same-line extraction with safe pattern matching
+        for pat in patterns:
+            # Check if pattern matches the label
+            if not re.search(pat, text, re.IGNORECASE):
+                continue
+            
+            # Try to extract value with defensive regex
+            # Use (.*)  instead of (.+) to allow empty groups
+            full_pattern = pat + r"\s*(.*)"
+            match = re.search(full_pattern, text, re.IGNORECASE)
+            
+            if not match:
+                continue
+            
+            # Safely extract the value group
+            raw_value = safe_group(match, 1, "")
+            cleaned_value = clean_extracted_value(raw_value)
+            
+            # If we got a meaningful value, return it
+            if len(cleaned_value) >= 2:  # Minimum 2 chars to be valid
+                return cleaned_value
+            
+            # Second try: multi-line extraction if current line has label only
+            if next_line and is_label_only(text, [pat]):
+                next_text = (next_line.get("text") or "").strip()
+                multi_line_value = extract_from_next_line(text, next_text, [pat])
+                if multi_line_value:
+                    return multi_line_value
+            
+            # Pattern matched but couldn't extract value - stop trying other patterns
+            # to avoid false positives
+            break
+        
+        return None
 
     def _clean_patient_name(self, name: str) -> str:
         """Clean up extracted patient name.

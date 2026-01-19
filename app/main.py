@@ -172,5 +172,5 @@ def process_bill(pdf_path: str, upload_id: str | None = None) -> str:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    bill_id = process_bill("T_Bill.pdf")
+    bill_id = process_bill("M_Bill.pdf")
     print(f"Stored bill with upload_id: {bill_id}")

@@ -78,7 +78,7 @@ def test_header_label_detection():
     assert not is_header_label("MRI BRAIN"), "MRI incorrectly flagged"
     assert not is_header_label("CONSULTATION"), "Consultation incorrectly flagged"
 
-    print("  ✓ Header label detection working")
+    print("   Header label detection working")
 
 
 def test_payment_detection():
