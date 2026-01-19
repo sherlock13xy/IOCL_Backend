@@ -1,24 +1,18 @@
 """MongoDB Schema Definitions for Medical Bills.
-
 Pydantic models used for validation/type-safety of extracted bill documents.
-
 Design constraints:
 - One PDF upload = one BillDocument.
 - Payments/receipts are NOT medical services and should be stored separately.
 """
 
 from __future__ import annotations
-
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-
 from pydantic import BaseModel, Field, field_validator
-
 
 ITEM_CATEGORIES: List[str] = [
     "medicines",
-    # "regulated_pricing_drugs" removed - use is_regulated_pricing flag instead
     "surgical_consumables",
     "implants_devices",
     "diagnostics_tests",
@@ -33,18 +27,15 @@ ITEM_CATEGORIES: List[str] = [
 
 class LineItem(BaseModel):
     """A single medical service/line item extracted from the bill.
-    
     Schema supports qty × rate validation with discrepancy detection.
     """
-
     description: str
     
-    # Quantity and pricing (B2 rule support)
     qty: Optional[float] = Field(default=1.0, alias="quantity")  # Support both names
     unit_rate: Optional[float] = None
     pdf_amount: Optional[float] = None  # Amount from PDF
     computed_amount: Optional[float] = None  # qty × rate
-    final_amount: float  # The amount to use (B2 rule: pdf_amount takes precedence)
+    final_amount: float  # The amount to use (pdf_amount takes precedence)
     discrepancy: bool = False  # True if pdf_amount != computed_amount
     
     # Legacy field for backward compatibility
@@ -106,10 +97,8 @@ class LineItem(BaseModel):
         if self.computed_amount is None and self.qty and self.unit_rate:
             object.__setattr__(self, 'computed_amount', round(self.qty * self.unit_rate, 2))
 
-
 class PaymentEvent(BaseModel):
     """A payment/receipt entry detected in the document."""
-
     description: str
     amount: Optional[float] = None
     reference: Optional[str] = None  # e.g., RCPO-..., UTR, TXN
@@ -117,10 +106,8 @@ class PaymentEvent(BaseModel):
     page: Optional[int] = None
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
-
 class PatientInfo(BaseModel):
     """Patient information extracted from the bill."""
-
     name: str = "UNKNOWN"
     mrn: Optional[str] = None
     gender: Optional[str] = None
@@ -139,27 +126,20 @@ class PatientInfo(BaseModel):
         v = re.sub(r"\s+", " ", v)
         return v.strip()
 
-
 class BillHeader(BaseModel):
     """Bill header / metadata."""
-
     # Bill numbers may appear multiple times; keep a primary plus a set.
     primary_bill_number: Optional[str] = None
     bill_numbers: List[str] = Field(default_factory=list)
-
     hospital_name: Optional[str] = None
     hospital_address: Optional[str] = None
-
     billing_date: Optional[str] = None
     visit_number: Optional[str] = None
     consultant: Optional[str] = None
-
     gstin: Optional[str] = None
-
 
 class BillSummary(BaseModel):
     """Financial summary parsed from the document."""
-
     gross_total: float = 0.0
     discount: float = 0.0
     tax: float = 0.0
@@ -169,34 +149,26 @@ class BillSummary(BaseModel):
     amount_paid: float = 0.0
     balance_to_pay: float = 0.0
 
-
 class BillDocument(BaseModel):
     """One uploaded PDF = one MongoDB BillDocument."""
-
     # Stable identity
     upload_id: Optional[str] = None
     source_pdf: Optional[str] = None
     page_count: int = 1
-
     # Extraction metadata
     extraction_date: datetime = Field(default_factory=datetime.now)
     extraction_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     schema_version: int = 1
-
     header: BillHeader = Field(default_factory=BillHeader)
     patient: PatientInfo = Field(default_factory=PatientInfo)
-
     # Medical items grouped by category
     items: Dict[str, List[LineItem]] = Field(default_factory=lambda: {c: [] for c in ITEM_CATEGORIES})
-
     # Payments/receipts separated from medical services
     payments: List[PaymentEvent] = Field(default_factory=list)
-
     # Derived values
     subtotals: Dict[str, float] = Field(default_factory=dict)
     summary: BillSummary = Field(default_factory=BillSummary)
     grand_total: float = 0.0
-
     # Store raw OCR excerpt for debugging
     raw_ocr_text: Optional[str] = None
 

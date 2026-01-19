@@ -13,7 +13,7 @@ if image_files:
     print(f"File exists: {os.path.exists(img_path)}")
     print(f"File size: {os.path.getsize(img_path)} bytes\n")
     
-    result = ocr(img_path)
+    result = ocr(img_path) # type: ignore
     
     print(f"Result type: {type(result)}")
     print(f"Result length: {len(result) if result else 0}\n")

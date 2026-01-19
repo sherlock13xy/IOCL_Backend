@@ -1,22 +1,18 @@
 """
-Medical Bill Item Classifier
-
-Classifies line items into categories using keyword matching and patterns.
+Medical Bill Item Classifier: Classifies line items into categories using keyword matching and patterns.
 """
 import re
 from typing import Dict, List, Optional
 
-
-# =============================================================================
 # CATEGORY DEFINITIONS
-# =============================================================================
 CATEGORY_RULES = {
     "medicines": {
         "keywords": [
             "tablet", "capsule", "syrup", "injection", "infusion",
             "solution", "ointment", "cream", "gel", "drops",
             "inhaler", "spray", "suspension", "powder",
-            # Common drug suffixes/types
+            "vaccine", "serum", "antiseptic", "disinfectant",
+            "vitamin", "supplement", "tonic",
             "antibiotic", "analgesic", "antipyretic", "antacid",
         ],
         "patterns": [
@@ -133,7 +129,7 @@ CATEGORY_RULES = {
             "endoscopy", "colonoscopy", "laparoscopy",
             "dialysis", "chemotherapy", "radiotherapy",
             "biopsy procedure", "excision", "incision",
-            "catheterization", "cath lab",
+            "catheterization", "cath lab", "radiology",
         ],
         "patterns": [],
         "priority": 2,
@@ -150,10 +146,7 @@ CATEGORY_RULES = {
     },
 }
 
-
-# =============================================================================
 # CLASSIFIER CLASS
-# =============================================================================
 class ItemClassifier:
     """
     Classifies medical bill line items into categories.
@@ -170,21 +163,17 @@ class ItemClassifier:
     def classify(self, description: str) -> str:
         """
         Classify a single item description.
-        
         Args:
             description: Item description text
-            
         Returns:
             Category name (str)
         """
         desc_lower = description.lower().strip()
-        
         for category, rules in self.categories:
             # Check keywords
             keywords = rules.get("keywords", [])
             if any(kw in desc_lower for kw in keywords):
                 return category
-            
             # Check patterns
             patterns = rules.get("patterns", [])
             if any(re.search(p, desc_lower) for p in patterns):
@@ -195,77 +184,60 @@ class ItemClassifier:
     def classify_batch(self, items: List[Dict]) -> Dict[str, List[Dict]]:
         """
         Classify multiple items and group by category.
-        
         Args:
             items: List of item dicts with 'description' key
-            
         Returns:
             Dict mapping category names to lists of items
         """
         classified = {cat: [] for cat in CATEGORY_RULES.keys()}
         classified["other"] = []
-        
         for item in items:
             desc = item.get("description", "")
             category = self.classify(desc)
             item["category"] = category
             classified[category].append(item)
-        
         return classified
     
     def reclassify_with_context(self, items: List[Dict], section_hint: Optional[str] = None) -> List[Dict]:
         """
         Reclassify items using both description and section context.
-        
         Args:
             items: List of item dicts
             section_hint: Optional section name from bill structure
-            
         Returns:
             Items with updated 'category' field
         """
         for item in items:
             desc = item.get("description", "")
             current_cat = item.get("category", "other")
-            
             # If already classified confidently, skip
             if current_cat != "other":
                 continue
-            
             # Use section hint if available
             if section_hint and section_hint in CATEGORY_RULES:
                 item["category"] = section_hint
             else:
                 # Try classification
                 item["category"] = self.classify(desc)
-        
         return items
 
-
-# =============================================================================
 # LEGACY FUNCTION (for backward compatibility)
-# =============================================================================
 def classify_items(items: List[Dict]) -> Dict[str, List[Dict]]:
     """
     Legacy function for backward compatibility.
-    
     Args:
         items: List of item dicts with 'description' key
-        
     Returns:
         Dict mapping category names to lists of items
     """
     classifier = ItemClassifier()
     return classifier.classify_batch(items)
 
-
 def classify_single(description: str) -> str:
     """
     Classify a single item description.
-    
     Args:
         description: Item description text
-        
     Returns:
         Category name
     """
