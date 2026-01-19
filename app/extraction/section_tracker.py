@@ -27,6 +27,8 @@ SECTION_KEYWORDS = {
     "medicines": [
         "medicine", "medicines", "pharmacy", "drug", "drugs",
         "medication", "medications", "pharma",
+        # Regulated pricing keywords now map to medicines with flag
+        "regulated pricing", "dpco", "nlem", "price regulated",
     ],
     "diagnostics_tests": [
         "diagnostic", "diagnostics", "investigation", "investigations",
@@ -61,10 +63,14 @@ SECTION_KEYWORDS = {
         "administrative", "admin", "registration", "processing",
         "documentation", "admission", "discharge",
     ],
-    "regulated_pricing_drugs": [
-        "regulated pricing", "dpco", "nlem", "price regulated",
-    ],
+    # "regulated_pricing_drugs" REMOVED - merged into medicines with is_regulated_pricing flag
 }
+
+# Keywords that indicate regulated pricing (for flagging, not separate category)
+REGULATED_PRICING_KEYWORDS = [
+    "regulated pricing", "dpco", "nlem", "price regulated",
+    "price control", "scheduled drug",
+]
 
 # Valid categories for item classification
 VALID_CATEGORIES = list(SECTION_KEYWORDS.keys()) + ["other"]
@@ -298,6 +304,21 @@ def classify_item_by_description(description: str) -> Optional[str]:
     return None
 
 
+def is_regulated_pricing_item(description: str) -> bool:
+    """Check if an item is a regulated pricing (DPCO/NLEM) item.
+    
+    Args:
+        description: Item description
+        
+    Returns:
+        True if item appears to be regulated pricing
+    """
+    if not description:
+        return False
+    t = description.lower().strip()
+    return any(kw in t for kw in REGULATED_PRICING_KEYWORDS)
+
+
 def get_category_for_item(
     description: str,
     page: int,
@@ -310,6 +331,9 @@ def get_category_for_item(
     1. Active section context from tracker
     2. Keyword classification from description
     3. Default to "other"
+    
+    Note: regulated_pricing_drugs items are now categorized as "medicines"
+    with is_regulated_pricing=True flag (handled by caller).
 
     Args:
         description: Item description
@@ -323,11 +347,17 @@ def get_category_for_item(
     # First try section context
     section = tracker.get_section_at(page, y)
     if section and section in VALID_CATEGORIES:
+        # Migrate old regulated_pricing_drugs to medicines
+        if section == "regulated_pricing_drugs":
+            return "medicines"
         return section
 
     # Fallback to description-based classification
     classified = classify_item_by_description(description)
     if classified:
+        # Migrate old regulated_pricing_drugs to medicines
+        if classified == "regulated_pricing_drugs":
+            return "medicines"
         return classified
 
     return "other"

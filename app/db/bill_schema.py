@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 ITEM_CATEGORIES: List[str] = [
     "medicines",
-    "regulated_pricing_drugs",
+    # "regulated_pricing_drugs" removed - use is_regulated_pricing flag instead
     "surgical_consumables",
     "implants_devices",
     "diagnostics_tests",
@@ -32,18 +32,33 @@ ITEM_CATEGORIES: List[str] = [
 
 
 class LineItem(BaseModel):
-    """A single medical service/line item extracted from the bill."""
+    """A single medical service/line item extracted from the bill.
+    
+    Schema supports qty × rate validation with discrepancy detection.
+    """
 
     description: str
-    amount: float
-    category: str = "other"
-
-    # Optional enrichment
-    quantity: Optional[float] = None
+    
+    # Quantity and pricing (B2 rule support)
+    qty: Optional[float] = Field(default=1.0, alias="quantity")  # Support both names
     unit_rate: Optional[float] = None
+    pdf_amount: Optional[float] = None  # Amount from PDF
+    computed_amount: Optional[float] = None  # qty × rate
+    final_amount: float  # The amount to use (B2 rule: pdf_amount takes precedence)
+    discrepancy: bool = False  # True if pdf_amount != computed_amount
+    
+    # Legacy field for backward compatibility
+    amount: Optional[float] = None  # Deprecated: use final_amount
+    category: str = "other"
+    
+    # Provenance tracking
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
-    page: Optional[int] = None
-    section_raw: Optional[str] = None
+    page: int = Field(default=0)  # Non-optional for tracking
+    section_raw: Optional[str] = None  # Raw section header text
+    
+    # Flags (NEW: replaces separate regulated_pricing_drugs category)
+    is_regulated_pricing: bool = False  # DPCO/NLEM items
+    is_discount: bool = False
 
     @field_validator("description")
     @classmethod
@@ -54,9 +69,11 @@ class LineItem(BaseModel):
         v = re.sub(r"\s+", " ", v)
         return v.strip()
 
-    @field_validator("amount")
+    @field_validator("final_amount", "amount")
     @classmethod
-    def validate_amount(cls, v: float) -> float:
+    def validate_amount(cls, v: Optional[float]) -> Optional[float]:
+        if v is None:
+            return None
         if v < 0:
             raise ValueError("Amount cannot be negative")
         return round(float(v), 2)
@@ -65,7 +82,29 @@ class LineItem(BaseModel):
     @classmethod
     def validate_category(cls, v: str) -> str:
         v = (v or "other").strip()
+        # Migrate old regulated_pricing_drugs to medicines
+        if v == "regulated_pricing_drugs":
+            return "medicines"
         return v if v in ITEM_CATEGORIES else "other"
+    
+    @field_validator("calculated_total", mode="before")
+    @classmethod
+    def compute_calculated_total(cls, v, info):
+        """Auto-compute if qty and rate available but total not provided."""
+        if v is not None:
+            return round(float(v), 2)
+        # Cannot access other fields in 'before' mode reliably, return None
+        return None
+    
+    def model_post_init(self, __context) -> None:
+        """Compute derived fields after model initialization."""
+        # Sync legacy amount field with final_amount for backward compatibility
+        if hasattr(self, 'final_amount') and self.final_amount is not None:
+            if self.amount is None:
+                object.__setattr__(self, 'amount', self.final_amount)
+        # Compute calculated_total if missing
+        if self.computed_amount is None and self.qty and self.unit_rate:
+            object.__setattr__(self, 'computed_amount', round(self.qty * self.unit_rate, 2))
 
 
 class PaymentEvent(BaseModel):

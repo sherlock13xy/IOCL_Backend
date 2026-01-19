@@ -210,11 +210,19 @@ def detect_all_zones(lines: List[Dict[str, Any]]) -> Dict[int, PageZones]:
 
 
 def _classify_section(text: str) -> Optional[str]:
-    """Classify section header text into category."""
+    """Classify section header text into category.
+    
+    Note: regulated_pricing_drugs is merged into medicines category.
+    Items are flagged with is_regulated_pricing=True separately.
+    """
     t = text.lower().strip()
 
     section_mapping = {
-        "medicines": ["medicine", "medicines", "pharmacy", "drug", "drugs"],
+        # Medicines includes regulated pricing keywords (merged category)
+        "medicines": [
+            "medicine", "medicines", "pharmacy", "drug", "drugs",
+            "regulated pricing", "dpco", "nlem", "price regulated",
+        ],
         "diagnostics_tests": ["diagnostic", "diagnostics", "investigation", "lab", "laboratory", "pathology"],
         "radiology": ["radiology", "imaging", "x-ray", "xray", "ct", "mri", "ultrasound", "usg"],
         "consultation": ["consultation", "consult"],
@@ -223,6 +231,7 @@ def _classify_section(text: str) -> Optional[str]:
         "surgical_consumables": ["consumable", "consumables", "surgical"],
         "implants_devices": ["implant", "implants", "device", "devices"],
         "administrative": ["administrative", "admin", "registration"],
+        # "regulated_pricing_drugs" REMOVED - merged into medicines
     }
 
     for section, keywords in section_mapping.items():

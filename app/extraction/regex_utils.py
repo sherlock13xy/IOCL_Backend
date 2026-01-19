@@ -87,9 +87,9 @@ def clean_extracted_value(value: str) -> str:
         return ""
     
     # Remove leading punctuation and whitespace
-    value = re.sub(r"^[:.\\-\\s]+", "", value)
+    value = re.sub(r"^[:.\-\s]+", "", value)
     # Normalize internal whitespace
-    value = re.sub(r"\\s+", " ", value)
+    value = re.sub(r"\s+", " ", value)
     return value.strip()
 
 
@@ -122,7 +122,7 @@ def try_extract_labeled_field(text: str, label_patterns: list[str],
     for pattern in label_patterns:
         # Try to match label + optional value
         # Use optional group to avoid crashes when value is missing
-        full_pattern = pattern + r"\\s*(.*)$"
+        full_pattern = pattern + r"\s*(.*)$"
         match = re.search(full_pattern, text, re.IGNORECASE)
         
         if match:
@@ -162,7 +162,7 @@ def is_label_only(text: str, label_patterns: list[str]) -> bool:
     
     for pattern in label_patterns:
         # Check if pattern matches but there's nothing substantial after it
-        match = re.search(pattern + r"\\s*(.*)$", text, re.IGNORECASE)
+        match = re.search(pattern + r"\s*(.*)$", text, re.IGNORECASE)
         if match:
             value_part = safe_group(match, 1, "")
             cleaned = clean_extracted_value(value_part)
@@ -207,11 +207,11 @@ def extract_from_next_line(current_text: str, next_text: str,
     next_cleaned = next_text.strip()
     
     # Skip if next line looks like another label
-    if re.search(r"[:.]\\s*$", next_cleaned):
+    if re.search(r"[:.]\s*$", next_cleaned):
         return None
     
     # Skip if next line is just a number (likely not a name/value)
-    if re.match(r"^\\d+\\.?\\d*$", next_cleaned):
+    if re.match(r"^\d+\.?\d*$", next_cleaned):
         return None
     
     return next_cleaned

@@ -153,6 +153,9 @@ def process_bill(pdf_path: str, upload_id: str | None = None) -> str:
     warnings = validate_extraction(bill_data)
     for w in warnings:
         logger.warning(f"Extraction warning: {w}")
+    # Also log structured extraction warnings collected during pipeline
+    for w in bill_data.get("extraction_warnings", []):
+        logger.warning(f"Extraction warning [{w.get('code')}]: {w.get('message')} :: {w.get('context')}")
 
     # 7) Log extraction summary
     total_items = sum(len(v) for v in bill_data.get("items", {}).values())
@@ -172,5 +175,5 @@ def process_bill(pdf_path: str, upload_id: str | None = None) -> str:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    bill_id = process_bill("M_Bill.pdf")
+    bill_id = process_bill("T_Bill.pdf")
     print(f"Stored bill with upload_id: {bill_id}")

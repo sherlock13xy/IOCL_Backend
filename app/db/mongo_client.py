@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import atexit
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +29,18 @@ class MongoDBClient:
     _instance = None
     _lock = threading.Lock()
     _client: Optional[MongoClient] = None
+
+    @classmethod
+    def _cleanup(cls):
+        """Clean up MongoDB client on interpreter shutdown."""
+        try:
+            if cls._client is not None:
+                cls._client.close()
+        except Exception:
+            pass
+        finally:
+            cls._client = None
+            cls._instance = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -57,6 +70,9 @@ class MongoDBClient:
         self.db = self.client[db_name]
         self.collection = self.db[collection_name]
         self.validate_schema = validate_schema
+
+        # Register atexit cleanup exactly once
+        atexit.register(MongoDBClient._cleanup)
 
     def _validate_and_transform(self, bill_data: Dict[str, Any]) -> Dict[str, Any]:
         if not self.validate_schema:

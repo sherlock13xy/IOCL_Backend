@@ -41,6 +41,7 @@ from app.extraction.section_tracker import (
     classify_item_by_description,
     detect_section_header,
     get_category_for_item,
+    is_regulated_pricing_item,
 )
 from app.extraction.zone_detector import (
     detect_all_zones,
@@ -55,6 +56,12 @@ from app.extraction.regex_utils import (
     is_label_only,
     extract_from_next_line,
     clean_extracted_value,
+)
+from app.extraction.column_parser import (
+    parse_item_columns,
+    is_valid_item,
+    is_non_billable_section,
+    ParsedItem,
 )
 
 
@@ -71,12 +78,24 @@ PAYMENT_PATTERNS = [
     r"\bbalance\s*(due|to\s*pay)\b",
     r"\btotal\s*(paid|received)\b",
     r"\bamount\s*(paid|received)\b",
+    # New broader patterns
+    r"\bpaid\s+by\b",
+    r"\bpayment\s+(mode|method|type)\b",
+    r"\b(advance|deposit)\s+received\b",
+    r"\brefund\b",
+    r"\bsettlement\b",
+    r"\b(credit|debit)\s+card\b",
+    r"\btransaction\s+id\b",
 ]
 
 
 def is_paymentish(text: str) -> bool:
     """Check if text indicates a payment/receipt entry."""
     t = (text or "").upper()
+    # Quick reject if looks like a medical item
+    medical_indicators = [" TAB ", " CAP ", " INJ ", " SYR ", " MG ", " ML ", " TEST ", " SCAN "]
+    if any(ind in f" {t} " for ind in medical_indicators):
+        return False
     return any(re.search(p, t, re.IGNORECASE) for p in PAYMENT_PATTERNS)
 
 
@@ -333,8 +352,29 @@ class HeaderAggregator:
         """Check if a field is locked (already has valid value)."""
         return field in self._locked
 
+    def _is_garbage_value(self, field: str, value: str) -> bool:
+        """Reject values that are just labels or artifacts."""
+        v = (value or "").strip()
+        if not v:
+            return True
+        v_upper = v.upper()
+        # label-only or punctuation-only
+        garbage_patterns = [
+            r"^(MRN|UHID|NAME|PATIENT|DATE|BILL|NO|NUMBER|ID)\.?[:]?$",
+            r"^[:.\-\s]+$",
+        ]
+        if any(re.match(p, v_upper) for p in garbage_patterns):
+            return True
+        # very short non-alphabetic
+        if len(v) < 2 or not re.search(r"[A-Za-z]", v):
+            return True
+        return False
+
     def offer(self, cand: Candidate) -> bool:
         """Offer a candidate value. Returns True if accepted."""
+        # New: quick garbage filter
+        if self._is_garbage_value(cand.field, cand.value):
+            return False
         if not _validate(cand.field, cand.value):
             return False
 
@@ -689,7 +729,7 @@ class ItemParser:
 
     CATEGORIES = [
         "medicines",
-        "regulated_pricing_drugs",
+        # "regulated_pricing_drugs" removed - will flag on items
         "surgical_consumables",
         "implants_devices",
         "diagnostics_tests",
@@ -740,7 +780,7 @@ class ItemParser:
         return self.categorized, self.discounts
 
     def _parse_blocks(self, item_blocks: List[Dict[str, Any]], page_zones: Dict) -> None:
-        """Parse from pre-grouped item blocks."""
+        """Parse from pre-grouped item blocks with enhanced column parsing."""
         for block in item_blocks:
             text = _normalize_ws(block.get("text") or "")
             desc = _normalize_ws(block.get("description") or "") or text
@@ -764,44 +804,56 @@ class ItemParser:
             if should_skip_as_header_label(desc):
                 continue
 
-            # Extract amount with validation
-            amount = self._extract_validated_amount(cols, text, desc)
-            if amount is None:
+            # Skip non-billable sections (totals, payments, etc.)
+            if is_non_billable_section(desc) or is_non_billable_section(text):
                 continue
 
             # Check if this is a DISCOUNT line - route to discounts, not items
             if is_discount(desc) or is_discount(text):
-                discount_type = classify_discount_type(desc) or classify_discount_type(text)
-                # Try to extract amount from description if it contains embedded amount
-                embedded_amount = extract_discount_amount(desc)
-                discount_amount = embedded_amount if embedded_amount is not None else amount
+                # Extract amount using fallback method
+                amount = self._extract_validated_amount(cols, text, desc)
+                if amount is not None:
+                    discount_type = classify_discount_type(desc) or classify_discount_type(text)
+                    embedded_amount = extract_discount_amount(desc)
+                    discount_amount = embedded_amount if embedded_amount is not None else amount
 
-                discount_id = _make_id("discount", [discount_type, f"{discount_amount:.2f}", desc.lower(), str(page)])
-                self.discounts[discount_type].append({
-                    "discount_id": discount_id,
-                    "description": desc,
-                    "amount": discount_amount,
-                    "type": discount_type,
-                    "page": page,
-                })
+                    discount_id = _make_id("discount", [discount_type, f"{discount_amount:.2f}", desc.lower(), str(page)])
+                    self.discounts[discount_type].append({
+                        "discount_id": discount_id,
+                        "description": desc,
+                        "amount": discount_amount,
+                        "type": discount_type,
+                        "page": page,
+                    })
                 continue  # Do NOT add to categorized items
+
+            # Enhanced column parsing with semantic context
+            parsed = parse_item_columns(desc, cols, full_text=text)
+            if not parsed or not is_valid_item(parsed):
+                continue
 
             # Get category from section tracker
             category = get_category_for_item(desc, page, y, self.section_tracker)
 
-            item_id = _make_id("item", [category, f"{amount:.2f}", desc.lower(), str(page)])
+            item_id = _make_id("item", [category, f"{parsed.final_amount:.2f}", desc.lower(), str(page)])
 
             self.categorized[category].append({
                 "item_id": item_id,
-                "description": desc,
-                "amount": amount,
+                "description": parsed.description,
+                "qty": parsed.qty,
+                "unit_rate": parsed.unit_rate,
+                "pdf_amount": parsed.pdf_amount,
+                "computed_amount": parsed.computed_amount,
+                "final_amount": parsed.final_amount,
+                "discrepancy": parsed.discrepancy,
                 "category": category,
                 "page": page,
                 "section_raw": self.section_tracker.get_section_at(page, y),
+                "is_regulated_pricing": is_regulated_pricing_item(desc) if category == "medicines" else False,
             })
 
     def _parse_lines(self, lines: List[Dict[str, Any]], page_zones: Dict) -> None:
-        """Parse from individual lines (fallback)."""
+        """Parse from individual lines (fallback) with consistent schema output."""
         for line in lines:
             text = _normalize_ws(line.get("text") or "")
             if not text:
@@ -829,6 +881,10 @@ class ItemParser:
 
             # Skip header labels
             if should_skip_as_header_label(text):
+                continue
+
+            # Skip non-billable sections (totals, payments, etc.)
+            if is_non_billable_section(text):
                 continue
 
             # Check if this is a DISCOUNT line - handle separately
@@ -864,13 +920,20 @@ class ItemParser:
 
             item_id = _make_id("item", [category, f"{amount:.2f}", text.lower(), str(page)])
 
+            # Build item with consistent schema (line-based has qty=1, no explicit rate)
             self.categorized[category].append({
                 "item_id": item_id,
                 "description": text,
-                "amount": amount,
+                "qty": 1.0,  # Default qty for line-based parsing
+                "unit_rate": None,
+                "pdf_amount": amount,
+                "computed_amount": None,
+                "final_amount": amount,
+                "discrepancy": False,
                 "category": category,
                 "page": page,
                 "section_raw": self.section_tracker.get_section_at(page, y),
+                "is_regulated_pricing": is_regulated_pricing_item(text) if category == "medicines" else False,
             })
 
     def _extract_validated_amount(
@@ -903,6 +966,29 @@ class ItemParser:
             return None
 
         return amount
+
+    def _extract_qty_rate(self, cols: List[str]) -> Tuple[Optional[float], Optional[float]]:
+        """Extract quantity and unit rate from columns (best-effort)."""
+        def to_float(x: str) -> Optional[float]:
+            if not x:
+                return None
+            try:
+                return float(re.sub(r"[₹$,\s]", "", x))
+            except Exception:
+                return None
+
+        nums: List[float] = []
+        for c in cols:
+            v = to_float(c)
+            if v is not None:
+                nums.append(v)
+        # Heuristic: if we have 3+ numbers, assume last is amount, previous two are qty, rate
+        if len(nums) >= 3:
+            return nums[-3], nums[-2]
+        if len(nums) == 2:
+            # Could be qty, amount OR rate, amount; can't know. Prefer qty.
+            return nums[0], None
+        return None, None
 
 
 # =============================================================================
@@ -1014,6 +1100,17 @@ class BillExtractor:
     - grand_total = sum of billable items only (excludes discounts & payments)
     """
 
+    def __init__(self):
+        self._warnings: List[Dict[str, Any]] = []
+
+    def warn(self, code: str, message: str, context: Optional[Dict[str, Any]] = None) -> None:
+        self._warnings.append({
+            "code": code,
+            "message": message,
+            "context": context or {},
+            "ts": datetime.now().isoformat(),
+        })
+
     def extract(self, ocr_result: Dict[str, Any]) -> Dict[str, Any]:
         """Extract bill data from OCR result.
 
@@ -1041,7 +1138,7 @@ class BillExtractor:
         # Detect zone boundaries
         page_zones = detect_all_zones(lines_sorted)
 
-        # Stage 1: Header parsing
+        # Stage 1: Header parsing (all pages, first-valid-wins)
         header_parser = HeaderParser()
         header_data = header_parser.parse(lines_sorted, page_zones)
 
@@ -1060,19 +1157,29 @@ class BillExtractor:
         self._validate_no_payment_leakage(categorized)
 
         # Calculate totals from BILLABLE items only (discounts excluded)
+        # Use final_amount (B2 rule: pdf_amount takes precedence over computed)
         subtotals = {
-            k: round(sum(i.get("amount", 0.0) or 0.0 for i in v), 2)
+            k: round(sum(i.get("final_amount", 0.0) or 0.0 for i in v), 2)
             for k, v in categorized.items()
         }
         # Remove zero subtotals for cleaner output
         subtotals = {k: v for k, v in subtotals.items() if v > 0}
 
         grand_total = round(sum(subtotals.values()), 2)
+        
+        # Track discrepancy count for warnings
+        total_discrepancies = sum(
+            sum(1 for i in v if i.get("discrepancy", False))
+            for v in categorized.values()
+        )
+        if total_discrepancies > 0:
+            self.warn("qty_rate_discrepancies", f"{total_discrepancies} items have qty×rate != pdf_amount")
 
         # Validate grand total
         is_valid, reason = validate_grand_total(grand_total)
         if not is_valid:
             # Log warning but don't fail - cap the total
+            self.warn("grand_total_cap", f"Grand total capped: {grand_total}")
             grand_total = min(grand_total, 1e8)
 
         # Build discount summary
@@ -1089,6 +1196,7 @@ class BillExtractor:
             "summary": {
                 "discounts": discount_summary,
             },
+            "extraction_warnings": self._warnings,
             "raw_ocr_text": raw_text[:5000] if raw_text else None,
         }
 
