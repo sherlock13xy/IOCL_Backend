@@ -1,6 +1,14 @@
 """
 Main entry point for the Medical Bill Verification backend.
-Run with: python backend/main.py
+
+IMPORTANT: Always run using module execution to ensure consistent imports:
+    ✅ CORRECT: python -m backend.main
+    ❌ WRONG:   python backend/main.py
+
+This ensures:
+- Absolute imports work correctly
+- Paths resolve regardless of current working directory
+- Dependencies are validated at startup
 """
 from __future__ import annotations
 
@@ -14,16 +22,42 @@ BACKEND_DIR = Path(__file__).resolve().parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-# Now we can import from app
-from app.main import process_bill
-
-# Configure logging
+# Configure logging BEFORE dependency check
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# STARTUP DEPENDENCY VALIDATION
+# ============================================================================
+# Check all required dependencies before proceeding
+# This catches missing packages early with clear error messages
+try:
+    from app.utils.dependency_check import check_all_dependencies, check_external_tools
+    
+    logger.info("="*80)
+    logger.info("Starting Medical Bill Verification Backend")
+    logger.info("="*80)
+    
+    # Check Python dependencies
+    check_all_dependencies()
+    
+    # Check external tools (MongoDB, Ollama, etc.) - warnings only
+    check_external_tools()
+    
+except Exception as e:
+    logger.error(f"\n{str(e)}")
+    logger.error("\n❌ Startup validation failed. Fix dependencies and try again.")
+    sys.exit(1)
+
+# Now we can safely import from app
+from app.main import process_bill
+
+logger.info("✅ All startup checks passed. System ready.\n")
+
 
 
 if __name__ == "__main__":
@@ -32,7 +66,7 @@ if __name__ == "__main__":
     Replace 'Apollo.pdf' with your actual PDF path.
     """
     # Example PDF path - adjust as needed
-    pdf_path = BACKEND_DIR.parent / "Apollo.pdf"
+    pdf_path = BACKEND_DIR.parent / "M_Bill.pdf"
     
     if not pdf_path.exists():
         logger.error(f"PDF file not found: {pdf_path}")

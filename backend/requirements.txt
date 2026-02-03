@@ -1,16 +1,72 @@
-fastapi
-uvicorn
-paddleocr==3.3.2
-paddlepaddle
-pymongo==3.12
-python-multipart
-python-dotenv
+# ============================================================================
+# Medical Bill Verification Backend - Complete Dependencies
+# ============================================================================
+# Install: pip install -r requirements.txt
+# Python Version: 3.8+ (3.10 recommended)
 
-# Bill Verifier dependencies (LOCAL MODELS ONLY)
+# ----------------------------------------------------------------------------
+# Core Web Framework
+# ----------------------------------------------------------------------------
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+
+# ----------------------------------------------------------------------------
+# PDF Processing
+# ----------------------------------------------------------------------------
+pdf2image>=1.16.3
+Pillow>=10.0.0
+
+# ----------------------------------------------------------------------------
+# OCR (Optical Character Recognition)
+# ----------------------------------------------------------------------------
+paddleocr==2.7.3
+paddlepaddle>=2.5.0
+opencv-python>=4.8.0
+
+# ----------------------------------------------------------------------------
+# Database
+# ----------------------------------------------------------------------------
+pymongo>=4.6.0
+
+# ----------------------------------------------------------------------------
+# Machine Learning / AI
+# ----------------------------------------------------------------------------
 sentence-transformers>=2.2.0
-faiss-cpu>=1.7.0
-numpy>=1.24.0
+torch>=2.0.0
+faiss-cpu>=1.7.4
+numpy>=1.24.0,<2.0.0
+
+# ----------------------------------------------------------------------------
+# Data Validation
+# ----------------------------------------------------------------------------
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
+
+# ----------------------------------------------------------------------------
+# HTTP Client
+# ----------------------------------------------------------------------------
 requests>=2.31.0
-torch>=2.0.0
+
+# ----------------------------------------------------------------------------
+# Development / Testing (Optional)
+# ----------------------------------------------------------------------------
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# black>=23.0.0
+# flake8>=6.0.0
+
+# ============================================================================
+# Installation Notes:
+# ============================================================================
+# 1. Create virtual environment: python -m venv venv
+# 2. Activate: venv\Scripts\activate (Windows) or source venv/bin/activate (Linux/Mac)
+# 3. Install: pip install -r requirements.txt
+# 4. Verify: python -m backend.app.utils.dependency_check
+#
+# External Dependencies (not in pip):
+# - Poppler: https://github.com/oschwartz10612/poppler-windows/releases
+# - MongoDB: https://www.mongodb.com/try/download/community
+# - Ollama: https://ollama.com/ (for LLM support)
+# ============================================================================
