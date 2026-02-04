@@ -68,7 +68,7 @@ def load_all_tieups(directory: str) -> List[TieUpRateSheet]:
     Load all tie-up rate sheets from a directory.
     
     Args:
-        directory: Path to directory containing JSON files
+        directory: Path to directory containing JSON files (should be absolute)
         
     Returns:
         List of TieUpRateSheet objects
@@ -76,18 +76,34 @@ def load_all_tieups(directory: str) -> List[TieUpRateSheet]:
     rate_sheets = []
     dir_path = Path(directory)
     
+    # Convert to absolute path for clarity in logs
+    abs_dir_path = dir_path.resolve()
+    
+    logger.info(f"Loading tie-up rate sheets from: {abs_dir_path}")
+    
     if not dir_path.exists():
-        logger.warning(f"Tie-up directory does not exist: {directory}")
+        logger.error(f"Tie-up directory does not exist: {abs_dir_path}")
+        logger.error(f"  Current working directory: {Path.cwd()}")
+        logger.error(f"  Please ensure the directory exists and contains JSON files")
         return rate_sheets
     
-    for file_path in dir_path.glob("*.json"):
+    # List all JSON files
+    json_files = list(dir_path.glob("*.json"))
+    logger.info(f"Found {len(json_files)} JSON files in {abs_dir_path}")
+    
+    if not json_files:
+        logger.warning(f"No JSON files found in: {abs_dir_path}")
+        return rate_sheets
+    
+    for file_path in json_files:
         try:
             rate_sheet = load_tieup_from_file(str(file_path))
             rate_sheets.append(rate_sheet)
-            logger.info(f"Loaded tie-up rate sheet: {rate_sheet.hospital_name}")
+            logger.info(f"✅ Loaded: {rate_sheet.hospital_name} ({file_path.name})")
         except Exception as e:
-            logger.error(f"Failed to load {file_path}: {e}")
+            logger.error(f"❌ Failed to load {file_path.name}: {e}")
     
+    logger.info(f"Successfully loaded {len(rate_sheets)}/{len(json_files)} rate sheets")
     return rate_sheets
 
 
@@ -111,17 +127,21 @@ class BillVerifier:
         
         Args:
             matcher: SemanticMatcher instance (uses global if None)
-            tieup_directory: Directory containing tie-up JSON files
+            tieup_directory: Directory containing tie-up JSON files (absolute path)
         """
         self.matcher = matcher or get_matcher()
         
-        # Use config-based path resolution
-        from app.config import TIEUP_DIR
+        # Use config-based ABSOLUTE path resolution
+        # CRITICAL: Always use get_tieup_dir() which returns absolute path
+        # This ensures the path works regardless of current working directory
+        from app.config import get_tieup_dir
         self.tieup_directory = tieup_directory or os.getenv(
             "TIEUP_DATA_DIR", 
-            str(TIEUP_DIR)
+            get_tieup_dir()  # Returns absolute path string
         )
         self._initialized = False
+        
+        logger.info(f"BillVerifier initialized with tie-up directory: {self.tieup_directory}")
     
     def initialize(self, rate_sheets: Optional[List[TieUpRateSheet]] = None):
         """
@@ -129,17 +149,31 @@ class BillVerifier:
         
         Args:
             rate_sheets: List of rate sheets (loads from directory if None)
+            
+        Raises:
+            RuntimeError: If no rate sheets are loaded (fail-fast)
         """
         if rate_sheets is None:
             rate_sheets = load_all_tieups(self.tieup_directory)
         
         if not rate_sheets:
-            logger.warning("No tie-up rate sheets loaded!")
-            return
+            error_msg = (
+                f"CRITICAL: No tie-up rate sheets loaded from: {self.tieup_directory}\n"
+                f"Please ensure:\n"
+                f"  1. The directory exists\n"
+                f"  2. It contains valid JSON files (e.g., apollo_hospital.json)\n"
+                f"  3. The JSON files follow the TieUpRateSheet schema"
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         
         self.matcher.index_rate_sheets(rate_sheets)
         self._initialized = True
-        logger.info(f"BillVerifier initialized with {len(rate_sheets)} rate sheets")
+        logger.info(f"✅ BillVerifier initialized with {len(rate_sheets)} rate sheets")
+        
+        # Log loaded hospitals for debugging
+        hospital_names = [rs.hospital_name for rs in rate_sheets]
+        logger.info(f"Loaded hospitals: {', '.join(hospital_names)}")
     
     def verify_bill(self, bill: BillInput) -> VerificationResponse:
         """

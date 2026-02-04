@@ -44,14 +44,17 @@ async def lifespan(app: FastAPI):
     
     # Initialize verifier with tie-up rate sheets
     verifier = get_verifier()
-    from app.config import TIEUP_DIR
-    tieup_dir = os.getenv("TIEUP_DATA_DIR", str(TIEUP_DIR))
+    from app.config import get_tieup_dir
+    tieup_dir = os.getenv("TIEUP_DATA_DIR", get_tieup_dir())
+    
+    logger.info(f"Loading tie-up rate sheets from: {tieup_dir}")
     
     try:
         verifier.initialize()
-        logger.info("Bill Verifier initialized successfully")
+        logger.info("✅ Bill Verifier initialized successfully")
     except Exception as e:
-        logger.warning(f"Failed to initialize verifier: {e}. Will initialize on first request.")
+        logger.error(f"❌ Failed to initialize verifier: {e}")
+        logger.warning("API will start but verification will fail until tie-ups are loaded")
     
     yield
     
@@ -285,8 +288,8 @@ async def reload_tieups():
     to refresh the semantic indices.
     """
     verifier = get_verifier()
-    from app.config import TIEUP_DIR
-    tieup_dir = os.getenv("TIEUP_DATA_DIR", str(TIEUP_DIR))
+    from app.config import get_tieup_dir
+    tieup_dir = os.getenv("TIEUP_DATA_DIR", get_tieup_dir())
     
     try:
         # Clear existing indices
