@@ -7,7 +7,7 @@ Defines schemas for:
 
 from __future__ import annotations
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -135,3 +135,27 @@ class VerificationResponse(BaseModel):
     green_count: int = 0
     red_count: int = 0
     mismatch_count: int = 0
+    allowed_not_comparable_count: int = 0  # PHASE-7: Track ALLOWED_NOT_COMPARABLE separately
+
+
+# =============================================================================
+# PHASE-7: Debug and Rendering Models
+# =============================================================================
+
+class DebugItemInfo(BaseModel):
+    """Debug information for item matching attempts (PHASE-7)."""
+    bill_item_original: str
+    normalized_item: str
+    category_attempts: List[Dict[str, Any]] = Field(default_factory=list)  # All category matches tried
+    item_candidates: List[Dict[str, Any]] = Field(default_factory=list)    # All item candidates evaluated
+    final_decision: str
+    decision_reason: str
+
+
+class RenderingOptions(BaseModel):
+    """Options for output rendering (PHASE-7)."""
+    debug_mode: bool = False
+    show_normalized_names: bool = True
+    show_similarity_scores: bool = True
+    group_by_category: bool = True
+    show_diagnostics: bool = True

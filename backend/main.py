@@ -105,6 +105,12 @@ Available hospitals are determined by JSON files in backend/data/tieups/
         help="Skip verification step (only process and extract)"
     )
     
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Show debug view with detailed matching information (PHASE-7)"
+    )
+    
     args = parser.parse_args()
     
     # Resolve PDF path
@@ -148,43 +154,30 @@ Available hospitals are determined by JSON files in backend/data/tieups/
                         hospital_name=args.hospital
                     )
                     
-                    # Display verification results
-                    print("\n" + "="*80)
-                    print("VERIFICATION RESULTS")
-                    print("="*80)
-                    print(f"Hospital: {verification_result.get('hospital', 'N/A')}")
-                    print(f"Matched Hospital: {verification_result.get('matched_hospital', 'N/A')}")
-                    print(f"Hospital Similarity: {verification_result.get('hospital_similarity', 0):.2%}")
-                    print(f"\nSummary:")
-                    print(f"  ✅ GREEN (Match): {verification_result.get('green_count', 0)}")
-                    print(f"  ❌ RED (Overcharged): {verification_result.get('red_count', 0)}")
-                    print(f"  ⚠️  MISMATCH (Not Found): {verification_result.get('mismatch_count', 0)}")
-                    print(f"\nFinancial Summary:")
-                    print(f"  Total Bill Amount: ₹{verification_result.get('total_bill_amount', 0):.2f}")
-                    print(f"  Total Allowed Amount: ₹{verification_result.get('total_allowed_amount', 0):.2f}")
-                    print(f"  Total Extra Amount: ₹{verification_result.get('total_extra_amount', 0):.2f}")
+                    # PHASE-7: Use output renderer for clean display
+                    from app.verifier.output_renderer import render_final_view, render_debug_view
+                    from app.verifier.models import RenderingOptions, VerificationResponse
                     
-                    # Display category-wise results
-                    print(f"\nCategory-wise Results:")
-                    for cat_result in verification_result.get('results', []):
-                        cat_name = cat_result.get('category', 'Unknown')
-                        matched_cat = cat_result.get('matched_category', 'N/A')
-                        print(f"\n  📁 {cat_name} → {matched_cat}")
-                        
-                        for item in cat_result.get('items', [])[:5]:  # Show first 5 items per category
-                            status = item.get('status', 'UNKNOWN')
-                            status_icon = "✅" if status == "GREEN" else "❌" if status == "RED" else "⚠️"
-                            print(f"    {status_icon} {item.get('bill_item', 'N/A')[:50]} - {status}")
-                            
-                            # Show amounts for all statuses
-                            if status == "RED":
-                                print(f"       Bill: ₹{item.get('bill_amount', 0):.2f}, Allowed: ₹{item.get('allowed_amount', 0):.2f}, Extra: ₹{item.get('extra_amount', 0):.2f}")
-                            elif status == "GREEN":
-                                print(f"       Bill: ₹{item.get('bill_amount', 0):.2f}, Allowed: ₹{item.get('allowed_amount', 0):.2f}")
-                            elif status == "MISMATCH":
-                                print(f"       Bill: ₹{item.get('bill_amount', 0):.2f}, Allowed: N/A, Extra: N/A")
+                    # Convert dict to VerificationResponse if needed
+                    if isinstance(verification_result, dict):
+                        response = VerificationResponse(**verification_result)
+                    else:
+                        response = verification_result
                     
-                    print("\n" + "="*80)
+                    # Render based on debug flag
+                    if args.debug:
+                        # Debug view (includes all matching attempts)
+                        output = render_debug_view(response, {})
+                    else:
+                        # Final view (clean user-facing)
+                        options = RenderingOptions(
+                            show_normalized_names=True,
+                            show_similarity_scores=True,
+                            show_diagnostics=True
+                        )
+                        output = render_final_view(response, options)
+                    
+                    print(output)
                     logger.info("Verification complete!")
                     
             except ImportError as e:

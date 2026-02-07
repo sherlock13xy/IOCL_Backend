@@ -196,7 +196,10 @@ class BillVerifier:
         if not hospital_match.is_match or hospital_match.rate_sheet is None:
             # No matching hospital - all items are MISMATCH
             logger.warning(f"No matching hospital found for: {bill.hospital_name}")
-            return self._create_all_mismatch_response(bill)
+            response = self._create_all_mismatch_response(bill)
+            # PHASE-7: Validate before returning
+            self._validate_response(bill, response)
+            return response
         
         matched_hospital = hospital_match.matched_text
         rate_sheet = hospital_match.rate_sheet
@@ -231,7 +234,7 @@ class BillVerifier:
             )
             response.results.append(category_result)
             
-            # Update summary statistics
+            # Update summary statistics (PHASE-7: Include ALLOWED_NOT_COMPARABLE)
             for item_result in category_result.items:
                 response.total_bill_amount += item_result.bill_amount
                 response.total_allowed_amount += item_result.allowed_amount
@@ -241,15 +244,43 @@ class BillVerifier:
                     response.green_count += 1
                 elif item_result.status == VerificationStatus.RED:
                     response.red_count += 1
+                elif item_result.status == VerificationStatus.ALLOWED_NOT_COMPARABLE:
+                    response.allowed_not_comparable_count += 1
                 else:
                     response.mismatch_count += 1
         
         logger.info(
             f"Verification complete: GREEN={response.green_count}, "
-            f"RED={response.red_count}, MISMATCH={response.mismatch_count}"
+            f"RED={response.red_count}, MISMATCH={response.mismatch_count}, "
+            f"ALLOWED_NOT_COMPARABLE={response.allowed_not_comparable_count}"
         )
         
+        # PHASE-7: Validate response before returning
+        self._validate_response(bill, response)
+        
         return response
+    
+    def _validate_response(self, bill: BillInput, response: VerificationResponse):
+        """
+        PHASE-7: Validate response for completeness and counter accuracy.
+        
+        Logs warnings if validation fails (non-blocking).
+        """
+        from app.verifier.output_renderer import validate_completeness, validate_summary_counters
+        
+        # Validate completeness
+        is_complete, msg = validate_completeness(bill, response)
+        if not is_complete:
+            logger.error(f"⚠️  PHASE-7 COMPLETENESS VALIDATION FAILED: {msg}")
+        else:
+            logger.debug("✅ PHASE-7 Completeness validation passed")
+        
+        # Validate counters
+        is_valid, msg = validate_summary_counters(response)
+        if not is_valid:
+            logger.error(f"⚠️  PHASE-7 COUNTER VALIDATION FAILED: {msg}")
+        else:
+            logger.debug("✅ PHASE-7 Counter validation passed")
     
     def _verify_category(
         self,
