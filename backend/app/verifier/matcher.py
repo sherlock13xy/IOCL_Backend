@@ -22,6 +22,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+logger = logging.getLogger(__name__)
+
 import faiss
 import numpy as np
 
@@ -54,7 +56,7 @@ except ImportError as e:
     V2_AVAILABLE = False
     logger.warning(f"V2 modules not available, using V1 logic: {e}")
 
-logger = logging.getLogger(__name__)
+
 
 
 # =============================================================================
@@ -65,6 +67,18 @@ logger = logging.getLogger(__name__)
 CATEGORY_SIMILARITY_THRESHOLD = float(os.getenv("CATEGORY_SIMILARITY_THRESHOLD", "0.70"))
 CATEGORY_SOFT_THRESHOLD = float(os.getenv("CATEGORY_SOFT_THRESHOLD", "0.65"))  # Soft acceptance
 ITEM_SIMILARITY_THRESHOLD = float(os.getenv("ITEM_SIMILARITY_THRESHOLD", "0.85"))
+
+# FEATURE FLAGS: Control matching behavior
+USE_V2_MATCHING = False  # V2 disabled by default - V1 has proven quality
+logger.info(f"Matching mode: {'V2 (Enhanced)' if USE_V2_MATCHING else 'V1 (Proven)'}")
+
+# UNIFIED THRESHOLDS: Single source of truth (V1 proven values)
+THRESHOLDS = {
+    "semantic_auto_match": 0.85,   # High confidence semantic match
+    "hybrid_auto_match": 0.60,     # V1 proven hybrid score threshold
+    "llm_verify": 0.55,            # Borderline cases for LLM
+    "min_similarity": 0.50,        # Below this = definite mismatch
+}
 
 
 # =============================================================================
@@ -611,6 +625,21 @@ class SemanticMatcher:
         item_index = self._item_indices[cat_key]
         item_refs = self._item_refs[cat_key]
         
+        # EXACT MATCH FAST PATH: Check for identical strings before semantic search
+        # This guarantees 100% accuracy for exact matches and avoids unnecessary embeddings
+        for idx, tieup_text in enumerate(item_index.texts):
+            if item_name_for_matching.lower().strip() == tieup_text.lower().strip():
+                logger.info(
+                    f"Exact match found (fast path): '{item_name}' → '{tieup_text}' (confidence=1.0)"
+                )
+                return ItemMatch(
+                    matched_text=tieup_text,
+                    similarity=1.0,  # Perfect match
+                    index=idx,
+                    item=item_refs[idx],
+                    normalized_item_name=item_name_for_matching
+                )
+        
         # Get embedding for query item (with graceful degradation)
         try:
             query_embedding = self.embedding_service.get_embedding(item_name_for_matching)
@@ -699,10 +728,10 @@ class SemanticMatcher:
         
         # PHASE-1: Use hybrid score threshold (0.60) instead of pure semantic threshold
         # This allows matches with lower semantic similarity but high token overlap
-        HYBRID_SCORE_THRESHOLD = 0.60
+        # Using unified threshold configuration
         
         # Auto-match for high hybrid score
-        if best_hybrid_score >= HYBRID_SCORE_THRESHOLD:
+        if best_hybrid_score >= THRESHOLDS["hybrid_auto_match"]:
             logger.info(
                 f"Hybrid match accepted: '{item_name}' → '{matched_name}' "
                 f"(hybrid={best_hybrid_score:.4f})"
@@ -817,6 +846,11 @@ class SemanticMatcher:
         Returns:
             ItemMatch with V2 enhancements (failure reasons, score breakdown, etc.)
         """
+        # Check feature flag first - V2 disabled by default for stability
+        if not USE_V2_MATCHING:
+            logger.debug("V2 matching disabled by feature flag, using proven V1 logic")
+            return self.match_item(item_name, hospital_name, category_name, threshold or ITEM_SIMILARITY_THRESHOLD, use_llm)
+        
         if not V2_AVAILABLE:
             # Fallback to V1 if V2 modules not available
             logger.debug("V2 modules not available, using V1 match_item")
@@ -916,6 +950,12 @@ class SemanticMatcher:
         best_item = None
         best_idx = -1
         
+        # Track first constraint failure (for reporting if all candidates fail)
+        first_failure_reason = None
+        first_failure_explanation = None
+        first_failed_candidate_name = None
+        first_failed_candidate_similarity = 0.0
+        
         for idx, semantic_sim in results:
             matched_name = item_index.texts[idx]
             item = item_refs[idx]
@@ -946,33 +986,25 @@ class SemanticMatcher:
             
             if not valid:
                 logger.debug(f"Constraint failed: '{matched_name}' - {constraint_reason}")
-                # Track first failure for reporting
-                if best_candidate is None:
-                    best_candidate = matched_name
-                    best_tieup_result = tieup_result
+                # Track first failure for reporting (but continue trying other candidates)
+                if first_failure_reason is None: # Only track the very first failure encountered
+                    first_failed_candidate_name = matched_name
+                    first_failed_candidate_similarity = semantic_sim
                     # Determine specific failure reason
                     if "DOSAGE_MISMATCH" in constraint_reason:
-                        failure_reason = FailureReasonV2.DOSAGE_MISMATCH.value
+                        first_failure_reason = FailureReasonV2.DOSAGE_MISMATCH.value
                     elif "FORM_MISMATCH" in constraint_reason:
-                        failure_reason = FailureReasonV2.FORM_MISMATCH.value
+                        first_failure_reason = FailureReasonV2.FORM_MISMATCH.value
                     elif "CATEGORY_BOUNDARY" in constraint_reason:
-                        failure_reason = FailureReasonV2.WRONG_CATEGORY.value
+                        first_failure_reason = FailureReasonV2.WRONG_CATEGORY.value
                     elif "MODALITY_MISMATCH" in constraint_reason:
-                        failure_reason = FailureReasonV2.MODALITY_MISMATCH.value
+                        first_failure_reason = FailureReasonV2.MODALITY_MISMATCH.value
                     elif "BODYPART_MISMATCH" in constraint_reason:
-                        failure_reason = FailureReasonV2.BODYPART_MISMATCH.value
+                        first_failure_reason = FailureReasonV2.BODYPART_MISMATCH.value
                     else:
-                        failure_reason = FailureReasonV2.LOW_SIMILARITY.value
-                    
-                    return ItemMatch(
-                        matched_text=matched_name,
-                        similarity=semantic_sim,
-                        index=-1,
-                        item=None,
-                        normalized_item_name=bill_result.core_text,
-                        failure_reason_v2=failure_reason,
-                        failure_explanation=constraint_reason
-                    )
+                        first_failure_reason = FailureReasonV2.LOW_SIMILARITY.value
+                    first_failure_explanation = constraint_reason
+                # Continue to next candidate (don't return yet!)
                 continue
             
             # LAYER 4: Calculate hybrid score
@@ -1046,17 +1078,17 @@ class SemanticMatcher:
             elif decision == MatchDecision.LLM_VERIFY and use_llm:
                 # Use LLM verification
                 self._llm_calls += 1
-                llm_result = self.llm_router.verify_match(
+                llm_result = self.llm_router.match_with_llm(
                     bill_item=bill_result.core_text,
                     tieup_item=best_tieup_result.core_text,
                     similarity=best_score
                 )
                 
-                if llm_result.get('match', False):
-                    logger.info(f"LLM verified match: '{best_candidate}'")
+                if llm_result.is_valid and llm_result.match:
+                    logger.info(f"LLM verified match: '{best_candidate}' (confidence={llm_result.confidence:.4f}, model={llm_result.model_used})")
                     return ItemMatch(
                         matched_text=best_candidate,
-                        similarity=calibrated_confidence,
+                        similarity=llm_result.confidence,  # Use LLM confidence instead of calibrated
                         index=best_idx,
                         item=best_item,
                         normalized_item_name=bill_result.core_text,
@@ -1067,6 +1099,19 @@ class SemanticMatcher:
         # =====================================================================
         # LAYER 6: Failure Reason Determination
         # =====================================================================
+        
+        # If we have a first_failure tracked, use that (all candidates failed constraints)
+        if first_failure_reason is not None and best_candidate is None:
+            logger.info(f"All candidates failed hard constraints, using first failure reason")
+            return ItemMatch(
+                matched_text=first_failed_candidate_name,
+                similarity=first_failed_candidate_similarity,
+                index=-1,
+                item=None,
+                normalized_item_name=bill_result.core_text,
+                failure_reason_v2=first_failure_reason,
+                failure_explanation=first_failure_explanation
+            )
         
         reason, explanation = determine_failure_reason_v2(
             item_name=item_name,
