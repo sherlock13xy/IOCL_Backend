@@ -69,6 +69,42 @@ IGNORE_PATTERNS: List[str] = [
     r'contact\s+us',
     r'customer\s+care',
     r'helpline',
+    r'helpdesk',
+    r'call\s+us',
+    r'email\s+us',
+    
+    # ENHANCED: Insurance and authorization codes
+    r'insurance\s+(no|number|id|code)',
+    r'policy\s+(no|number|id)',
+    r'claim\s+(no|number|id)',
+    r'authorization\s+(no|number|id|code)',
+    r'auth\s+(no|number|id|code)',
+    r'approval\s+(no|number|id|code)',
+    r'pre-?auth',
+    r'tpa\s+(no|number|id)',
+    r'cashless\s+(no|number|id)',
+    
+    # ENHANCED: Reference and tracking numbers
+    r'ref\s+(no|number|id)',
+    r'reference\s+(no|number|id)',
+    r'tracking\s+(no|number|id)',
+    r'transaction\s+(no|number|id)',
+    r'uhid',  # Unique Hospital ID
+    r'mrn',   # Medical Record Number
+    
+    # ENHANCED: Administrative metadata
+    r'for\s+any\s+(queries|questions|assistance)',
+    r'in\s+case\s+of\s+(emergency|queries)',
+    r'24[x/]7',
+    r'toll[- ]free',
+    r'customer\s+support',
+    
+    # ENHANCED: Footer noise
+    r'this\s+is\s+(a\s+)?computer[- ]generated',
+    r'no\s+signature\s+required',
+    r'authorized\s+signatory',
+    r'terms\s+(and|&)\s+conditions',
+    r'disclaimer',
 ]
 
 
