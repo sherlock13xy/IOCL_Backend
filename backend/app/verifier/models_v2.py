@@ -113,10 +113,12 @@ class CategoryTotals(BaseModel):
     total_bill: float
     total_allowed: float
     total_extra: float
+    total_unclassified: float = 0.0  # Phase-8+: Items needing manual review
     green_count: int
     red_count: int
     mismatch_count: int
     ignored_count: int = 0
+    unclassified_count: int = 0  # Phase-8+: Count of unclassified items
 
 
 class GrandTotals(BaseModel):
@@ -129,11 +131,13 @@ class GrandTotals(BaseModel):
     total_bill: float
     total_allowed: float
     total_extra: float
+    total_unclassified: float = 0.0  # Phase-8+: Items needing manual review
     total_allowed_not_comparable: float
     green_count: int
     red_count: int
     mismatch_count: int
     ignored_count: int
+    unclassified_count: int = 0  # Phase-8+: Count of unclassified items
 
 
 class FinancialSummary(BaseModel):

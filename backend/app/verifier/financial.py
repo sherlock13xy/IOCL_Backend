@@ -62,10 +62,12 @@ def calculate_category_totals(
             "total_bill": 0.0,
             "total_allowed": 0.0,
             "total_extra": 0.0,
+            "total_unclassified": 0.0,  # Phase-8+: Third financial bucket
             "green_count": 0,
             "red_count": 0,
             "mismatch_count": 0,
             "ignored_count": 0,
+            "unclassified_count": 0,  # Phase-8+
         }
     )
     
@@ -76,13 +78,18 @@ def calculate_category_totals(
         cat_data["total_allowed"] += agg_item.total_allowed
         cat_data["total_extra"] += agg_item.total_extra
         
-        # Count by status
+        # Count by status (Phase-8+: Include UNCLASSIFIED)
         if agg_item.status == VerificationStatus.GREEN:
             cat_data["green_count"] += 1
         elif agg_item.status == VerificationStatus.RED:
             cat_data["red_count"] += 1
+        elif agg_item.status == VerificationStatus.UNCLASSIFIED:
+            cat_data["unclassified_count"] += 1
+            cat_data["total_unclassified"] += agg_item.total_bill
         elif agg_item.status == VerificationStatus.MISMATCH:
+            # Legacy MISMATCH - treat as unclassified
             cat_data["mismatch_count"] += 1
+            cat_data["total_unclassified"] += agg_item.total_bill
         elif agg_item.status == VerificationStatus.IGNORED_ARTIFACT:
             cat_data["ignored_count"] += 1
     
@@ -123,10 +130,23 @@ def calculate_grand_totals(aggregated_items: List[AggregatedItem]) -> GrandTotal
         >>> grand_totals.green_count
         3
     """
+    # Phase-8+: Calculate unclassified total
+    total_unclassified = sum(
+        item.total_bill
+        for item in aggregated_items
+        if item.status in (VerificationStatus.UNCLASSIFIED, VerificationStatus.MISMATCH)
+    )
+    
+    unclassified_count = sum(
+        1 for item in aggregated_items 
+        if item.status in (VerificationStatus.UNCLASSIFIED, VerificationStatus.MISMATCH)
+    )
+    
     return GrandTotals(
         total_bill=sum(item.total_bill for item in aggregated_items),
         total_allowed=sum(item.total_allowed for item in aggregated_items),
         total_extra=sum(item.total_extra for item in aggregated_items),
+        total_unclassified=total_unclassified,  # Phase-8+
         total_allowed_not_comparable=sum(
             item.total_bill
             for item in aggregated_items
@@ -146,6 +166,7 @@ def calculate_grand_totals(aggregated_items: List[AggregatedItem]) -> GrandTotal
             for item in aggregated_items
             if item.status == VerificationStatus.IGNORED_ARTIFACT
         ),
+        unclassified_count=unclassified_count,  # Phase-8+
     )
 
 
@@ -177,11 +198,18 @@ def build_financial_summary(aggregated_items: List[AggregatedItem]) -> Financial
     category_totals = calculate_category_totals(aggregated_items)
     grand_totals = calculate_grand_totals(aggregated_items)
     
+    # Phase-8+: Validate financial reconciliation
+    expected_total = grand_totals.total_allowed + grand_totals.total_extra + grand_totals.total_unclassified
+    tolerance = 0.01
+    is_balanced = abs(grand_totals.total_bill - expected_total) < tolerance
+    
     logger.info(
         f"Built financial summary: "
         f"Bill=₹{grand_totals.total_bill:.2f}, "
         f"Allowed=₹{grand_totals.total_allowed:.2f}, "
-        f"Extra=₹{grand_totals.total_extra:.2f}"
+        f"Extra=₹{grand_totals.total_extra:.2f}, "
+        f"Unclassified=₹{grand_totals.total_unclassified:.2f}, "
+        f"Balanced={is_balanced}"
     )
     
     return FinancialSummary(

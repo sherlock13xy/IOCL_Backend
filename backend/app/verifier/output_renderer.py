@@ -135,10 +135,11 @@ def validate_summary_counters(
     Returns:
         (is_valid, error_message)
     """
-    # Count actual items by status
+    # Count actual items by status (Phase-8+: Include UNCLASSIFIED)
     actual_green = 0
     actual_red = 0
     actual_mismatch = 0
+    actual_unclassified = 0
     actual_allowed_not_comparable = 0
     
     for cat_result in verification_response.results:
@@ -147,15 +148,18 @@ def validate_summary_counters(
                 actual_green += 1
             elif item_result.status == VerificationStatus.RED:
                 actual_red += 1
+            elif item_result.status == VerificationStatus.UNCLASSIFIED:
+                actual_unclassified += 1
             elif item_result.status == VerificationStatus.MISMATCH:
                 actual_mismatch += 1
             elif item_result.status == VerificationStatus.ALLOWED_NOT_COMPARABLE:
                 actual_allowed_not_comparable += 1
     
-    # Compare with summary counters
+    # Compare with summary counters (Phase-8+: Include UNCLASSIFIED)
     summary_green = verification_response.green_count
     summary_red = verification_response.red_count
     summary_mismatch = verification_response.mismatch_count
+    summary_unclassified = verification_response.unclassified_count
     summary_allowed = verification_response.allowed_not_comparable_count
     
     errors = []
@@ -164,6 +168,8 @@ def validate_summary_counters(
         errors.append(f"GREEN: actual={actual_green}, summary={summary_green}")
     if actual_red != summary_red:
         errors.append(f"RED: actual={actual_red}, summary={summary_red}")
+    if actual_unclassified != summary_unclassified:
+        errors.append(f"UNCLASSIFIED: actual={actual_unclassified}, summary={summary_unclassified}")
     if actual_mismatch != summary_mismatch:
         errors.append(f"MISMATCH: actual={actual_mismatch}, summary={summary_mismatch}")
     if actual_allowed_not_comparable != summary_allowed:
@@ -173,9 +179,9 @@ def validate_summary_counters(
         error_msg = "Counter mismatch: " + "; ".join(errors)
         return False, error_msg
     
-    # Verify total
-    total_actual = actual_green + actual_red + actual_mismatch + actual_allowed_not_comparable
-    total_summary = summary_green + summary_red + summary_mismatch + summary_allowed
+    # Verify total (Phase-8+: Include UNCLASSIFIED)
+    total_actual = actual_green + actual_red + actual_unclassified + actual_mismatch + actual_allowed_not_comparable
+    total_summary = summary_green + summary_red + summary_unclassified + summary_mismatch + summary_allowed
     
     if total_actual != total_summary:
         return False, f"Total mismatch: actual={total_actual}, summary={total_summary}"
@@ -226,28 +232,42 @@ def render_final_view(
         if verification_response.hospital_similarity is not None:
             lines.append(f"Hospital Similarity: {verification_response.hospital_similarity:.2%}")
     
-    # Summary statistics
+    # Summary statistics (Phase-8+: Include UNCLASSIFIED)
     lines.append("")
     lines.append("Summary:")
-    lines.append(f"  ✅ GREEN (Match): {verification_response.green_count}")
+    lines.append(f"  ✅ GREEN (Allowed): {verification_response.green_count}")
     lines.append(f"  ❌ RED (Overcharged): {verification_response.red_count}")
-    lines.append(f"  ⚠️  MISMATCH (Not Found): {verification_response.mismatch_count}")
+    lines.append(f"  ⚠️  UNCLASSIFIED (Needs Review): {verification_response.unclassified_count}")
+    if verification_response.mismatch_count > 0:
+        lines.append(f"  🔶 MISMATCH (Legacy): {verification_response.mismatch_count}")
     lines.append(f"  🟦 ALLOWED_NOT_COMPARABLE: {verification_response.allowed_not_comparable_count}")
     
     total_items = (
         verification_response.green_count +
         verification_response.red_count +
+        verification_response.unclassified_count +
         verification_response.mismatch_count +
         verification_response.allowed_not_comparable_count
     )
     lines.append(f"  📊 Total Items: {total_items}")
     
-    # Financial summary
+    # Financial summary (Phase-8+: Include UNCLASSIFIED and reconciliation)
     lines.append("")
     lines.append("Financial Summary:")
-    lines.append(f"  Total Bill Amount: ₹{verification_response.total_bill_amount:.2f}")
-    lines.append(f"  Total Allowed Amount: ₹{verification_response.total_allowed_amount:.2f}")
-    lines.append(f"  Total Extra Amount: ₹{verification_response.total_extra_amount:.2f}")
+    lines.append("━" * 60)
+    lines.append(f"  Total Bill Amount:        ₹{verification_response.total_bill_amount:,.2f}")
+    lines.append(f"  Total Allowed Amount:     ₹{verification_response.total_allowed_amount:,.2f}")
+    lines.append(f"  Total Extra Amount:       ₹{verification_response.total_extra_amount:,.2f}")
+    lines.append(f"  Total Unclassified Amount:₹{verification_response.total_unclassified_amount:,.2f}  ← Needs Review")
+    lines.append("━" * 60)
+    
+    # Phase-8+: Show financial reconciliation status
+    balanced_icon = "✅" if verification_response.financials_balanced else "❌"
+    lines.append(f"  Financials Balanced: {balanced_icon} {'YES' if verification_response.financials_balanced else 'NO'}")
+    
+    if not verification_response.financials_balanced:
+        expected = verification_response.total_allowed_amount + verification_response.total_extra_amount + verification_response.total_unclassified_amount
+        lines.append(f"  ⚠️  WARNING: Bill (₹{verification_response.total_bill_amount:.2f}) != Allowed + Extra + Unclassified (₹{expected:.2f})")
     
     # Category-wise results (PHASE-7: Each category appears ONCE)
     lines.append("")
@@ -292,7 +312,7 @@ def render_final_view(
                     f"Allowed: ₹{item_result.allowed_amount:.2f}, "
                     f"Extra: ₹{item_result.extra_amount:.2f}"
                 )
-            elif status in (VerificationStatus.MISMATCH, VerificationStatus.ALLOWED_NOT_COMPARABLE):
+            elif status in (VerificationStatus.UNCLASSIFIED, VerificationStatus.MISMATCH, VerificationStatus.ALLOWED_NOT_COMPARABLE):
                 financial_line += f"Bill: ₹{item_result.bill_amount:.2f}, Allowed: N/A, Extra: N/A"
             
             lines.append(financial_line)
@@ -387,8 +407,10 @@ def _get_status_icon(status: VerificationStatus) -> str:
         return "✅"
     elif status == VerificationStatus.RED:
         return "❌"
-    elif status == VerificationStatus.MISMATCH:
+    elif status == VerificationStatus.UNCLASSIFIED:
         return "⚠️"
+    elif status == VerificationStatus.MISMATCH:
+        return "🔶"  # Legacy
     elif status == VerificationStatus.ALLOWED_NOT_COMPARABLE:
         return "🟦"
     else:

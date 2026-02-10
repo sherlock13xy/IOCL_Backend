@@ -29,6 +29,7 @@ class VerificationStatus(str, Enum):
     MISMATCH = "MISMATCH" # No matching item found in tie-up rates
     ALLOWED_NOT_COMPARABLE = "ALLOWED_NOT_COMPARABLE"  # Item exists but no valid price comparison
     IGNORED_ARTIFACT = "IGNORED_ARTIFACT"  # Phase-2: OCR artifact or admin charge (ignored)
+    UNCLASSIFIED = "UNCLASSIFIED"  # Phase-8+: Needs manual review (missing tie-up, low similarity, etc.)
 
 
 
@@ -132,10 +133,13 @@ class VerificationResponse(BaseModel):
     total_bill_amount: float = 0.0
     total_allowed_amount: float = 0.0
     total_extra_amount: float = 0.0
+    total_unclassified_amount: float = 0.0  # Phase-8+: Items needing manual review
     green_count: int = 0
     red_count: int = 0
     mismatch_count: int = 0
     allowed_not_comparable_count: int = 0  # PHASE-7: Track ALLOWED_NOT_COMPARABLE separately
+    unclassified_count: int = 0  # Phase-8+: Count of unclassified items
+    financials_balanced: bool = True  # Phase-8+: Validation flag for financial reconciliation
 
 
 # =============================================================================

@@ -89,10 +89,10 @@ def check_price(
     """
     bill_amount = round(bill_amount, 2)
     
-    # No match = MISMATCH status
+    # No match = UNCLASSIFIED status (Phase-8+: third financial bucket)
     if tieup_item is None:
         return PriceCheckResult(
-            status=VerificationStatus.MISMATCH,
+            status=VerificationStatus.UNCLASSIFIED,
             bill_amount=bill_amount,
             allowed_amount=0.0,
             extra_amount=0.0
@@ -126,16 +126,19 @@ def check_price(
 
 def create_mismatch_result(bill_amount: float) -> PriceCheckResult:
     """
-    Create a MISMATCH result for items that couldn't be matched.
+    Create an UNCLASSIFIED result for items that couldn't be matched.
+    
+    Phase-8+: Changed from MISMATCH to UNCLASSIFIED to properly track
+    items needing manual review in the third financial bucket.
     
     Args:
         bill_amount: Amount charged in the bill
         
     Returns:
-        PriceCheckResult with MISMATCH status
+        PriceCheckResult with UNCLASSIFIED status
     """
     return PriceCheckResult(
-        status=VerificationStatus.MISMATCH,
+        status=VerificationStatus.UNCLASSIFIED,
         bill_amount=round(bill_amount, 2),
         allowed_amount=0.0,
         extra_amount=0.0

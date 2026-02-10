@@ -169,12 +169,13 @@ def resolve_aggregate_status(line_items: List) -> VerificationStatus:
     """
     Resolve final status for aggregated group.
     
-    Priority-based resolution:
+    Priority-based resolution (Phase-8+):
     1. RED - Any RED present (overcharge detected)
-    2. MISMATCH - Any MISMATCH present (item not found)
-    3. GREEN - Only GREEN + ALLOWED_NOT_COMPARABLE (within limits)
-    4. ALLOWED_NOT_COMPARABLE - Only non-comparable items
-    5. IGNORED_ARTIFACT - Only artifacts
+    2. UNCLASSIFIED - Any UNCLASSIFIED present (needs manual review)
+    3. MISMATCH - Any MISMATCH present (legacy, treated as UNCLASSIFIED)
+    4. GREEN - Only GREEN + ALLOWED_NOT_COMPARABLE (within limits)
+    5. ALLOWED_NOT_COMPARABLE - Only non-comparable items
+    6. IGNORED_ARTIFACT - Only artifacts
     
     Args:
         line_items: List of line items in the group
@@ -189,8 +190,8 @@ def resolve_aggregate_status(line_items: List) -> VerificationStatus:
         >>> resolve_aggregate_status([GREEN, GREEN, ALLOWED_NOT_COMPARABLE])
         VerificationStatus.GREEN
         
-        >>> resolve_aggregate_status([MISMATCH])
-        VerificationStatus.MISMATCH
+        >>> resolve_aggregate_status([UNCLASSIFIED])
+        VerificationStatus.UNCLASSIFIED
     """
     from app.verifier.artifact_detector import is_artifact
     
@@ -200,11 +201,14 @@ def resolve_aggregate_status(line_items: List) -> VerificationStatus:
     if all(is_artifact(item.bill_item) for item in line_items):
         return VerificationStatus.IGNORED_ARTIFACT
     
-    # Priority-based resolution
+    # Priority-based resolution (Phase-8+: UNCLASSIFIED before MISMATCH)
     if VerificationStatus.RED in statuses:
         return VerificationStatus.RED
+    elif VerificationStatus.UNCLASSIFIED in statuses:
+        return VerificationStatus.UNCLASSIFIED
     elif VerificationStatus.MISMATCH in statuses:
-        return VerificationStatus.MISMATCH
+        # Legacy MISMATCH - treat as UNCLASSIFIED
+        return VerificationStatus.UNCLASSIFIED
     elif VerificationStatus.GREEN in statuses:
         return VerificationStatus.GREEN
     elif VerificationStatus.ALLOWED_NOT_COMPARABLE in statuses:

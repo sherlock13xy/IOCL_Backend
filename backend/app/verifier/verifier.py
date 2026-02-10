@@ -234,25 +234,74 @@ class BillVerifier:
             )
             response.results.append(category_result)
             
-            # Update summary statistics (PHASE-7: Include ALLOWED_NOT_COMPARABLE)
+            # Phase-8+ CORRECTED: Use single source of truth for financial contributions
+            # This fixes the critical bug where IGNORED_ARTIFACT items were added to
+            # total_bill_amount but not to any bucket, causing financial imbalance.
+            from app.verifier.financial_contribution import calculate_financial_contribution
+            
             for item_result in category_result.items:
-                response.total_bill_amount += item_result.bill_amount
-                response.total_allowed_amount += item_result.allowed_amount
-                response.total_extra_amount += item_result.extra_amount
+                # Calculate financial contribution (single source of truth)
+                contribution = calculate_financial_contribution(item_result)
                 
+                # Update status counts (all items counted)
                 if item_result.status == VerificationStatus.GREEN:
                     response.green_count += 1
                 elif item_result.status == VerificationStatus.RED:
                     response.red_count += 1
+                elif item_result.status == VerificationStatus.UNCLASSIFIED:
+                    response.unclassified_count += 1
+                elif item_result.status == VerificationStatus.MISMATCH:
+                    response.mismatch_count += 1
                 elif item_result.status == VerificationStatus.ALLOWED_NOT_COMPARABLE:
                     response.allowed_not_comparable_count += 1
-                else:
-                    response.mismatch_count += 1
+                # IGNORED_ARTIFACT is counted implicitly (not in any status bucket)
+                
+                # Update financial totals (ONLY for non-excluded items)
+                # CRITICAL: This is where IGNORED_ARTIFACT and ALLOWED_NOT_COMPARABLE
+                # are properly excluded from ALL financial totals
+                if not contribution.is_excluded:
+                    response.total_bill_amount += contribution.bill_amount
+                    response.total_allowed_amount += contribution.allowed_contribution
+                    response.total_extra_amount += contribution.extra_contribution
+                    response.total_unclassified_amount += contribution.unclassified_contribution
+        
+        # Phase-8+ CORRECTED: Validate financial reconciliation
+        expected_total = (
+            response.total_allowed_amount + 
+            response.total_extra_amount + 
+            response.total_unclassified_amount
+        )
+        tolerance = 0.01  # Allow 1 cent difference due to rounding
+        response.financials_balanced = abs(response.total_bill_amount - expected_total) < tolerance
+        
+        if not response.financials_balanced:
+            # CRITICAL: This should NEVER happen with corrected logic
+            # If it does, there's a bug in calculate_financial_contribution
+            diff = abs(response.total_bill_amount - expected_total)
+            logger.error(
+                f"❌ PHASE-8+ FINANCIAL RECONCILIATION FAILED: "
+                f"Bill={response.total_bill_amount:.2f}, "
+                f"Allowed={response.total_allowed_amount:.2f}, "
+                f"Extra={response.total_extra_amount:.2f}, "
+                f"Unclassified={response.total_unclassified_amount:.2f}, "
+                f"Expected={expected_total:.2f}, "
+                f"Difference={diff:.2f}"
+            )
+        else:
+            logger.info(
+                f"✅ Financial reconciliation passed: "
+                f"Bill={response.total_bill_amount:.2f} = "
+                f"Allowed({response.total_allowed_amount:.2f}) + "
+                f"Extra({response.total_extra_amount:.2f}) + "
+                f"Unclassified({response.total_unclassified_amount:.2f})"
+            )
         
         logger.info(
             f"Verification complete: GREEN={response.green_count}, "
-            f"RED={response.red_count}, MISMATCH={response.mismatch_count}, "
-            f"ALLOWED_NOT_COMPARABLE={response.allowed_not_comparable_count}"
+            f"RED={response.red_count}, UNCLASSIFIED={response.unclassified_count}, "
+            f"MISMATCH={response.mismatch_count}, "
+            f"ALLOWED_NOT_COMPARABLE={response.allowed_not_comparable_count}, "
+            f"Financials Balanced={response.financials_balanced}"
         )
         
         # PHASE-7: Validate response before returning
@@ -499,7 +548,7 @@ class BillVerifier:
         return ItemVerificationResult(
             bill_item=bill_item.item_name,
             matched_item=None,
-            status=VerificationStatus.MISMATCH,
+            status=VerificationStatus.UNCLASSIFIED,  # Phase-8+: Use UNCLASSIFIED instead of MISMATCH
             bill_amount=bill_item.amount,
             allowed_amount=0.0,
             extra_amount=0.0,
@@ -548,7 +597,7 @@ class BillVerifier:
                 item_result = ItemVerificationResult(
                     bill_item=bill_item.item_name,
                     matched_item=None,
-                    status=VerificationStatus.MISMATCH,
+                    status=VerificationStatus.UNCLASSIFIED,  # Phase-8+: Use UNCLASSIFIED for no hospital match
                     bill_amount=bill_item.amount,
                     allowed_amount=0.0,
                     extra_amount=0.0,
@@ -559,7 +608,8 @@ class BillVerifier:
                 
                 category_result.items.append(item_result)
                 response.total_bill_amount += bill_item.amount
-                response.mismatch_count += 1
+                response.total_unclassified_amount += bill_item.amount  # Phase-8+: Track in unclassified bucket
+                response.unclassified_count += 1  # Phase-8+: Count as unclassified
             
             response.results.append(category_result)
         
