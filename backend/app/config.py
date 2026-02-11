@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 TIEUP_DIR = DATA_DIR / "tieups"
+TIEUPS_DIR = TIEUP_DIR  # Alias for consistency
 UPLOADS_DIR = BASE_DIR / "uploads"
 PROCESSED_DIR = UPLOADS_DIR / "processed"
 
